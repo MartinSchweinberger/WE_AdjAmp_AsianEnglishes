@@ -13,6 +13,7 @@ This document shows an analysis of adjective amplification in Hong Kong, Indian 
 knitr::opts_chunk$set(error = TRUE)
 ```
 
+
 ## Preparation{-}
 
 Package installation
