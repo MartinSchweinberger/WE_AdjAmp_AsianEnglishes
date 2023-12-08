@@ -1,0 +1,56 @@
+---
+title: "Word groups"
+output: html_notebook
+---
+
+
+```{r}
+indadj <- names(table(ind$Adjective))
+v1 <- c("bad", "beautiful", "big", "boring", "busy", "close", "difficult", "expensive", "funny", "good", "great", "happy", "hard", "high", "hot", "important", "interesting", "long", "nice", "other", "small", "young")
+setdiff(indadj, v1)
+```
+
+
+
+```{r}
+v2 <- paste("bad", "big", "different", "good", "great", "hard", "interesting", "nice", sep = " ")
+v3 <- paste("different", sep = " ")
+v4 <- paste("bad", "beautiful", "big", "boring", "busy", "close", "difficult", "expensive", "funny", "good", "great", "happy", "hard", "high", "hot", "important", "interesting", "long", "nice", "other", "small", "young", sep = " ")
+v5 <- paste("bad", "boring", "busy", "good", "happy", "long", "other", sep = " ")
+v6 <- paste("beautiful", "close", "difficult", "interesting", "nice", sep = " ")
+vectors <- c(v1, v2, v3, v4, v5, v6)
+str(vectors)
+```
+
+```{r}
+library(quanteda)
+library(quanteda.textplots)
+text_dfm <- tokens(vectors) %>% 
+  dfm()
+# inspect
+text_dfm
+```
+
+```{r}
+tag_fcm <- fcm(text_dfm)
+tag_fcm
+```
+
+```{r}
+textplot_network(tag_fcm, 
+                 edge_alpha = 0.1, 
+                 edge_size = 5,
+                 edge_color = "gray",
+                 vertex_labelsize = sqrt(colSums(tag_fcm)))
+```
+
+
+```{r}
+library(FactoMineR)
+library(factoextra)
+# perform correspondence analysis
+res.ca <- CA(as.matrix(tag_fcm), graph = FALSE)
+# plot results
+fviz_ca_row(res.ca, repel = TRUE, col.row = "gray20")
+```
+

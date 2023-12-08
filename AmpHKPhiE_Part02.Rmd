@@ -1,0 +1,725 @@
+---
+title: "A corpus-based analysis of ongoing change in the adjective amplifier systems of Hong Kong, Philippine, and Indian English - Part 2"
+author: Anonymous
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output: html_document
+---
+
+# Introduction{-}
+
+This document shows an analysis of adjective amplification in Hong Kong, Indian , and Philippine English based on the respective components of the International Corpus of English (ICE).  
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(error = TRUE)
+```
+
+## Preparation{-}
+
+Package installation
+
+```{r install, eval = F, message = F, warning = F}
+install.packages("tidyverse")
+install.packages("tidyr")
+install.packages("here")
+install.packages("car")
+install.packages("caret")
+install.packages("here")
+install.packages("randomForest")
+install.packages("rms")
+install.packages("lme4")
+install.packages("lmerTest")
+install.packages("utils")
+install.packages("sjPlot")
+install.packages("effects")
+install.packages("simr")
+install.packages("lattice")
+install.packages("Matrix")
+install.packages("DescTools", dependencies = T)
+```
+
+* set options
+
+* activate packages
+
+* load functions.
+
+```{r amphkpie_02_01, echo=T, eval = T, message=FALSE, warning=FALSE}
+# load packages
+library(tidyverse)
+library(tidyr)
+library(here)
+library(ggparty)
+library(partykit)
+library(caret)
+library(DescTools)
+# set options
+options(stringsAsFactors = F)                           
+options(scipen = 999) 
+options(max.print=10000)   
+```
+
+## Load data{-}
+
+```{r amphkpie_02_03, echo=T, eval = T, message=FALSE, warning=FALSE}
+ice <- base::readRDS(file = here::here("data", "iceamp_prefinal.rda"))
+# inspect
+head(ice)
+```
+
+## Clean data
+
+check date distribution
+
+```{r}
+table(ice$Corpus, ice$Date)
+```
+
+check age distribution
+
+```{r}
+table(ice$Corpus, ice$Age)
+```
+
+
+```{r}
+ice %>%
+  dplyr::group_by(Adjective) %>%
+  dplyr::summarise(Gradability = mean(Gradability)) %>%
+  ggplot(aes(Adjective, Gradability, label=Adjective)) +
+  geom_text(size = 2)
+```
+
+
+Factorize predictors and scale frequency
+
+```{r amphkpie_02_05, echo=T, eval = T, message=FALSE, warning=FALSE}
+ice <- ice %>%
+  select(-Id, -PreContext, -Token, -L1, -Postag, -PostContext, -PreContextLong, -Nationality, -OtherLanguages, -Birthplace) %>%
+  dplyr::mutate_if(is.character, factor) %>%
+  dplyr::mutate(Speaker = paste0(Corpus, ":", File, "$", Speaker),
+                Variety = dplyr::case_when(Corpus == "ICE-HK" ~ "HKE",
+                                           Corpus == "ICE-IND" ~ "IndE",
+                                           Corpus == "ICE-PHI" ~ "PhiE",
+                                           T ~ Corpus)) %>%
+  dplyr::mutate(Age = dplyr::case_when(Age == "17-25" ~ "16-25",
+                                       Age == "18-25" ~ "16-25",
+                                       Age == "26-41" ~ "26-40",
+                                       Age == "42+" ~ "41+",
+                                       T ~ Age)) %>%
+  dplyr::mutate(Date = as.numeric(as.character(Date)),
+                Date = ifelse(Date < 1998, "1997-", "1998+")) %>%
+  dplyr::mutate_if(is.character, factor)
+# inspect
+str(ice)
+```
+
+```{r}
+amp <- ice %>%
+  dplyr::filter(Variant != "0")
+```
+
+check semantic categories distribution
+
+```{r}
+ice %>%
+  dplyr::filter(SemanticCategory == "other") %>%
+  dplyr::group_by(Adjective) %>%
+  dplyr::summarise(Freq = n()) %>%
+  dplyr::sample_n(20) 
+```
+
+save data
+
+```{r}
+base::saveRDS(ice, file = here::here("data", "ice_final.rda"))
+```
+
+
+
+# Visualization
+
+```{r message=F, warning=F}
+ice %>%
+  # data prep
+  dplyr::group_by(Variety, Amplified, Function) %>%
+  dplyr::summarise(Freq = n()) %>%
+  dplyr::group_by(Variety) %>%
+  dplyr::mutate(Total = sum(Freq),
+                Percent = round(Freq/Total*100, 1),
+                Label = paste0(Percent, " (", Freq, ")")) %>%
+  dplyr::filter(Amplified == 1) %>%
+  # plot
+  ggplot(aes(x=Variety, y= Percent, group = Function, fill = Function, label = Label)) +          
+  geom_text(aes(y = Percent + 1), position = position_dodge(0.9), size=3) +     
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  coord_cartesian(ylim = c(0, 20)) +
+  theme_bw(base_size = 10) +         
+  theme(axis.text.x = element_text(size=10),  
+        axis.text.y = element_text(size=10, face="plain"),
+        legend.position = "top") + 
+  labs(x = "Variety of English", y = "Percent (of Amplification)") +     
+  scale_fill_manual(values = c("gray80", "gray40")) 
+# save
+ggsave(here::here("images", "Fig2.png"), width = 15, height = 10,unit = "cm")
+```
+
+
+```{r message=F, warning=F}
+amp %>%
+  dplyr::group_by(Variety, Variant) %>%
+  dplyr::summarise(Freq = n()) %>%
+  dplyr::group_by(Variety) %>%
+  dplyr::mutate(Total = sum(Freq),
+                Percent = round(Freq/Total*100, 1),
+                Label = paste0(Percent, " (", Freq, ")")) %>%
+  dplyr::group_by(Variant) %>%
+  dplyr::mutate(VarFreq = sum(Freq)) %>%
+  dplyr::filter(VarFreq > 4) %>%
+  # start plot
+  ggplot(aes(x=reorder(Variant, VarFreq), y = Percent, label = Label)) + 
+  geom_text(hjust = -0.1, size=3, angle = 0) +     
+  geom_bar(stat = "identity") + 
+  coord_flip(ylim = c(0, 119)) +
+  theme_bw(base_size = 10) +         
+  theme(axis.text.x = element_text(size=10),  
+        axis.text.y = element_text(size=10, face="plain"),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+  labs(x = "Amplifier Variant (only N 5+)", y = "Percent (N)") +     
+  scale_color_manual(guide = FALSE) +
+  facet_wrap(~Variety)
+# save
+ggsave(here::here("images", "Fig1_reduced.png"), width = 15, height = 8, unit = "cm")
+```
+
+```{r message=F, warning=F}
+amp %>%
+  dplyr::group_by(Variety, Variant) %>%
+  dplyr::summarise(Freq = n()) %>%
+  dplyr::group_by(Variety) %>%
+  dplyr::mutate(Total = sum(Freq),
+                Percent = round(Freq/Total*100, 1),
+                Label = paste0(Percent, " (", Freq, ")")) %>%
+  dplyr::group_by(Variant) %>%
+  dplyr::mutate(VarFreq = sum(Freq)) %>%
+  #dplyr::filter(VarFreq > 4) %>%
+  # start plot
+  ggplot(aes(x=reorder(Variant, VarFreq), y = Percent, label = Label)) + 
+  geom_text(hjust = -0.1, size=3, angle = 0) +     
+  geom_bar(stat = "identity") + 
+  coord_flip(ylim = c(0, 119)) +
+  theme_bw(base_size = 10) +         
+  theme(axis.text.x = element_text(size=10),  
+        axis.text.y = element_text(size=10, face="plain"),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+  labs(x = "Amplifier Variant (only N 5+)", y = "Percent (N)") +     
+  scale_color_manual(guide = FALSE) +
+  facet_wrap(~Variety)
+# save
+ggsave(here::here("images", "Fig1.png"), width = 15, height = 15, unit = "cm")
+```
+
+
+
+
+
+## Data Reduction
+
+Determine adjective frequency
+
+```{r amphkpie_02_07, echo=T, eval = T, message=FALSE, warning=FALSE}
+fadj <- names(table(amp$Adjective))[which(table(amp$Adjective) > 25)]
+fadj
+```
+
+Determine variant frequency
+
+```{r amphkpie_02_09, echo=T, eval = T, message=FALSE, warning=FALSE}
+famp <- names(table(amp$Variant))[which(table(amp$Variant) > 50)]
+famp
+```
+
+
+
+Collapse infrequent adjectives and amplifiers
+
+
+
+```{r amphkpie_02_11,  message=TRUE, warning=TRUE}
+amp <- amp %>%
+  dplyr::mutate(Frequency = round(Frequency, 3),
+                Gradability = round(Gradability, 3),
+                Adjective = dplyr::case_when(Adjective %in% fadj ~ Adjective, 
+                                             T ~ "other"),
+                SVariant = Variant, 
+                Variant = dplyr::case_when(Variant %in% famp ~ Variant, 
+                                           T ~ "other")) %>%
+  dplyr::select(-Corpus, -Amplified, -File) %>%
+  dplyr::mutate_if(is.character, factor) %>%
+  droplevels()
+# inspect
+str(amp)
+```
+
+save data
+
+```{r}
+base::saveRDS(amp, file = here::here("data", "amp_final.rda"))
+```
+
+## Visualisation
+
+```{r message=F, warning=F}
+amp %>%
+  # prep
+  dplyr::group_by(Variety, Function, Age, Variant) %>%
+  dplyr::summarise(Freq = n()) %>%
+  dplyr::group_by(Variety, Function, Age) %>%
+  dplyr::mutate(Total = sum(Freq),
+                Percent = round(Freq/Total*100, 1)) %>%
+  dplyr::mutate_if(is.character, factor) %>%
+  # plot
+  ggplot(aes(y = Percent, x = Age, linetype = Variant, shape = Variant, group = Variant)) +
+  geom_line(size = .5) +
+  geom_point(shape = 19, size=8, colour="white") + 
+  geom_point(size = 3) +
+  scale_shape_manual(values = c("o", "r", "s", "v")) +
+  facet_grid(Function~Variety) +
+  theme_bw() +
+  theme(legend.position = "top",
+        axis.text.x = element_text(size=10),  
+        axis.text.y = element_text(size=10, face="plain"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  coord_cartesian(ylim = c(0, 119))
+# save
+ggsave(here::here("images", "Fig3.png"), width = 15, height = 10,unit = "cm")
+```
+
+
+
+
+## Tabulation
+
+
+```{r}
+# process
+tb1a <- amp %>%
+  dplyr::group_by(Variety, Age, Gender) %>%
+  dplyr::summarize(Adjectives = n(),
+            VariantType = names(table(Variant)),
+            VariantsN = table(Variant),
+            VariantsP = round(VariantsN/Adjectives*100, 1),
+            Percent = paste0(VariantsP, "% (N=", VariantsN, ")")) %>%
+  dplyr::select(-VariantsN, -VariantsP) %>%
+  tidyr::spread(VariantType, Percent) %>%
+  dplyr::ungroup()
+# save
+writexl::write_xlsx(tb1a, here::here("tables", "tb1a.xlsx"))
+# inspect data
+tb1a
+```
+
+
+```{r}
+tb1b <- amp %>%
+  dplyr::mutate(Variant = dplyr::case_when(Variant == "very" ~ "very",
+                                           Variant == "really" ~ "really",
+                                           Variant == "so" ~ "so",
+                                           T ~ "other")) %>%
+  dplyr::group_by(Variety) %>%
+  dplyr::reframe(Speakers = length(names(table(Speaker)[table(Speaker) > 0])),
+                 Adjectives = n(),
+                 VariantType = names(table(Variant)),
+                 VariantsN = table(Variant),
+                 VariantsP = round(VariantsN/Adjectives*100, 1),
+                 Percent = paste0(VariantsP, "% (N=", VariantsN, ")")) %>%
+  dplyr::select(-VariantsN, -VariantsP) %>%
+  tidyr::spread(VariantType, Percent) %>%
+  dplyr::ungroup() %>%
+  tibble::add_row(Variety = "Total",
+                  Speakers = sum(.$Speakers),
+                  Adjectives = sum(.$Adjectives),
+                  other = as.character(sum(as.numeric(gsub(".*\\=([0-9]{1,})\\)", "\\1", .$other)))),
+                  really = as.character(sum(as.numeric(gsub(".*\\=([0-9]{1,})\\)", "\\1", .$really)))),
+                  so = as.character(sum(as.numeric(gsub(".*\\=([0-9]{1,})\\)", "\\1", .$so)))),
+                  very = as.character(sum(as.numeric(gsub(".*\\=([0-9]{1,})\\)", "\\1", .$very))))) %>%
+  dplyr::mutate(other = ifelse(Variety == "Total", paste0(round(as.numeric(other)/Adjectives*100, 1), "% (N=", other, ")"), other),
+                really = ifelse(Variety == "Total", paste0(round(as.numeric(really)/Adjectives*100, 1), "% (N=", really, ")"), really),
+                so = ifelse(Variety == "Total", paste0(round(as.numeric(so)/Adjectives*100, 1), "% (N=", so, ")"), so),
+                very = ifelse(Variety == "Total", paste0(round(as.numeric(very)/Adjectives*100, 1), "% (N=", very, ")"), very))
+# save
+writexl::write_xlsx(tb1b, here::here("tables", "tb1b.xlsx")) 
+# inspect data
+tb1b
+```
+
+
+```{r}
+amp %>%
+  dplyr::group_by(Variety, Speaker) %>%
+  dplyr::summarise(Frequency = n()) %>%
+  dplyr::arrange(-Frequency) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(Variety) %>%
+  dplyr::mutate(Speaker = 1:n()) %>%
+  dplyr::ungroup() %>%
+  ggplot(aes(x = Speaker, y = Frequency, group = Variety, fill = Variety)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~Variety) +
+  theme_bw() +
+  theme(legend.position = "top") +
+  scale_color_manual(values = c("gray80", "gray50", "gray20"))
+```
+
+# Preparation for stats 
+
+## Clean data
+
+check amplifiers by variety
+
+```{r}
+amp %>%
+  dplyr::filter(Variety == "IndE") %>%
+  dplyr::group_by(SVariant) %>%
+  dplyr::summarise(Freq = n()) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(All = sum(Freq)) %>%
+  dplyr::summarise(NVariants = nrow(.),
+                   NAdjs = unique(All),
+                   Rate = round(NAdjs/NVariants, 1))
+```
+
+
+```{r}
+amp %>%
+  dplyr::filter(Variety == "HKE") %>%
+  dplyr::group_by(SVariant) %>%
+  dplyr::summarise(Freq = n()) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(All = sum(Freq)) %>%
+  dplyr::summarise(NVariants = nrow(.),
+                   NAdjs = unique(All),
+                   Rate = round(NAdjs/NVariants, 1))
+```
+
+```{r}
+amp %>%
+  dplyr::filter(Variety == "PhiE") %>%
+  dplyr::group_by(SVariant) %>%
+  dplyr::summarise(Freq = n()) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(All = sum(Freq)) %>%
+  dplyr::summarise(NVariants = nrow(.),
+                   NAdjs = unique(All),
+                   Rate = round(NAdjs/NVariants, 1))
+```
+
+Factorize predictors and scale frequency
+
+```{r,  message=TRUE, warning=TRUE}
+ice <- amp %>%
+  select(-SVariant)  %>%
+  droplevels()
+# inspect
+str(ice)
+```
+
+check gradability
+
+```{r}
+summary(ice$Gradability)
+```
+
+check frequency
+
+```{r}
+summary(ice$Frequency)
+```
+
+
+split into varieties
+
+```{r}
+hke <- ice %>% dplyr::filter(Variety == "HKE") %>% dplyr::select(-Variety, -Speaker) %>% droplevels() %>% na.omit()
+ind <- ice %>% dplyr::filter(Variety == "IndE") %>% dplyr::select(-Variety, -Speaker, -Date, -EducationLevel, -Ethnicity) %>% droplevels() %>% na.omit()
+phi <- ice %>% dplyr::filter(Variety == "PhiE") %>% dplyr::select(-Variety, -Speaker, -EducationLevel, -Ethnicity) %>% droplevels() %>% na.omit()
+# inspect
+str(hke); str(ind); str(phi)
+```
+
+
+# Conditional Inference Tree Analysis{-}
+
+
+## ICE-PHI{-}
+
+```{r}
+# set.seed (to store random numbers and thus make results reproducible)
+set.seed(2020083001) 
+# create initial conditional inference tree model
+phi.ctree <- ctree(Variant ~ Adjective + Age + Gender + Function + Emotionality + SemanticCategory +  Gradability, data = phi)
+# extract p-values
+pvals <- unlist(nodeapply(phi.ctree, ids = nodeids(phi.ctree), function(n) info_node(n)$p.value))
+pvals <- pvals[pvals <.05]
+# plotting
+phit <- ggparty(phi.ctree) +
+  geom_edge() +
+  geom_edge_label(size = 3) +
+  geom_node_label(line_list = list(aes(label = splitvar),
+                                   aes(label = paste0("N=", nodesize, ", p", ifelse(pvals < .001, "<.001", paste0("=", round(pvals, 3)))), 
+                                       size = 10)),
+                  line_gpar = list(list(size = 10), list(size = 10)), 
+                  ids = "inner") +
+  geom_node_label(aes(label = paste0("N=", nodesize)),
+                  ids = "terminal", 
+                  nudge_y = 0.01, 
+                  nudge_x = 0.01, 
+                  size = 4) +
+  geom_node_plot(gglist = list(geom_bar(aes(x = "", fill = Variant),
+                                        position = position_fill()),
+      theme_minimal(base_size = 10),
+      theme(panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank()),
+      scale_fill_manual(values = c("gray20", "gray40", "gray60", "gray80")),
+      scale_y_continuous(breaks = seq(0, 1, .2)),
+      xlab(""), 
+      ylab("Probability")),
+    shared_axis_labels = TRUE)
+# save
+#ggsave(phit, file = here("images", "Fig4.png"), height = 6,  width = 10, dpi = 320)
+# inspect
+phit
+```
+
+Check accuracy of tree
+
+```{r}
+tphi <- phi %>%
+  dplyr::mutate(prediction = predict(phi.ctree, newdata = phi))
+confusionMatrix(data=tphi$prediction, reference = tphi$Variant)
+```
+check increase in accuracy by percentage points and by factor
+
+```{r}
+# percentage points
+0.5643-0.3758
+# improvement factor
+0.5643/0.3758
+```
+
+
+
+## ICE-IND{-}
+
+
+
+
+```{r}
+# set.seed (to store random numbers and thus make results reproducible)
+set.seed(2020083001) 
+# create initial conditional inference tree model
+ind.ctree <- ctree(Variant ~ Adjective + Age + Gender + Function +  Emotionality + SemanticCategory +  Gradability, data = ind)
+# extract p-values
+pvals <- unlist(nodeapply(ind.ctree, ids = nodeids(ind.ctree), function(n) info_node(n)$p.value))
+pvals <- pvals[pvals <.05]
+# inspect
+ind.ctree
+```
+
+
+```{r}
+# adapt adjectives
+different <- c("different")
+group1 <- c("beautiful", "close", "difficult", "interesting", "nice")
+group2 <- c("bad", "boring", "busy", "good", "happy", "long", "other")
+group3 <- c("high", "hot")
+# not in other groups
+group4 <- c("big", "expensive", "funny", "great", "hard", "important", "small", "young")
+
+ind <- ind %>%
+  dplyr::mutate(Adjective = dplyr::case_when(Adjective %in%  different ~ "different",
+                                             Adjective %in%  group1 ~ "g1",
+                                             Adjective %in%  group2 ~ "g2",
+                                             Adjective %in%  group3 ~ "g3",
+                                             Adjective %in%  group4 ~ "g4",
+                                             T ~ Adjective)) %>%
+  dplyr::mutate(Emotionality = dplyr::case_when(Emotionality ==  "neutral" ~ "non-pos.",
+                                                Emotionality ==  "negative" ~ "non-pos.",
+                                                Emotionality ==  "positive" ~ "pos.",
+                                                T ~ Emotionality)) %>%
+  dplyr::mutate(SemanticCategory = dplyr::case_when(SemanticCategory ==  "appearance" ~ "app.",
+                                             SemanticCategory ==  "evaluative" ~ "eval.",
+                                             SemanticCategory ==  "descriptive" ~ "other",
+                                             SemanticCategory ==  "membership" ~ "other",
+                                             SemanticCategory ==  "relational" ~ "other",
+                                             T ~ SemanticCategory)) %>%
+  dplyr::mutate_if(is.character, factor)
+# inspect
+names(table(ind$Adjective))
+```
+
+
+
+
+```{r}
+# set.seed (to store random numbers and thus make results reproducible)
+set.seed(2020083001) 
+# create initial conditional inference tree model
+ind.ctree <- ctree(Variant ~ Adjective + Age + Gender + Function +  Emotionality + SemanticCategory +  Gradability, data = ind, minbucket = 20)
+# extract p-values
+pvals <- unlist(nodeapply(ind.ctree, ids = nodeids(ind.ctree), function(n) info_node(n)$p.value))
+pvals <- pvals[pvals <.05]
+# plotting
+indt <- ggparty(ind.ctree, terminal_space = 0.3,
+        # id specifies node; x and y values need to be between 0 and 1
+        layout = data.frame(id = c(1, 3, 4, 9),
+                            x = c(0.1, 0.7, 0.4, 0.9),
+                            y = c(1.0, 0.9, 0.8, 0.8))) +
+  geom_edge() +
+  geom_edge_label(size = 3) +
+  geom_node_label(line_list = list(aes(label = splitvar),
+                                   aes(label = paste0("N=", nodesize, ", p", ifelse(pvals < .001, "<.001", paste0("=", round(pvals, 3)))), 
+                                       size = 10)),
+                  line_gpar = list(list(size = 10), list(size = 10)), 
+                  ids = "inner") +
+  geom_node_label(aes(label = paste0("N=", nodesize)),
+                  ids = "terminal", 
+                  nudge_y = 0.01, 
+                  nudge_x = 0.01, 
+                  size = 4) +
+  geom_node_plot(gglist = list(geom_bar(aes(x = "", fill = Variant),
+                                        position = position_fill()),
+      theme_minimal(base_size = 10),
+      theme(panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank()),
+      scale_fill_manual(values = c("gray20", "gray40", "gray60", "gray80")),
+      scale_y_continuous(breaks = seq(0, 1, .2)),
+      xlab(""), 
+      ylab("Probability")),
+    shared_axis_labels = TRUE)
+# save
+ggsave(indt, file = here("images", "Fig5.png"),
+         height = 6,  width = 10, dpi = 320)
+# inspect
+indt
+```
+
+
+
+Check accuracy of tree
+
+```{r}
+tind <- ind %>%
+  dplyr::mutate(prediction = predict(ind.ctree, newdata = ind))
+confusionMatrix(data=tind$prediction, reference = tind$Variant)
+```
+
+Check accuracy of tree
+
+```{r}
+# percentage points
+0.7424-0.7314
+# improvement factor
+0.7424/0.7314
+```
+
+
+## ICE-HK{-}
+
+```{r}
+# set.seed (to store random numbers and thus make results reproducible)
+set.seed(2020083001) 
+# create initial conditional inference tree model
+hke.ctree <- ctree(Variant ~ Adjective + Age + Gender + Function + Date + Emotionality + SemanticCategory +  Gradability, data = hke)
+# inspect
+hke.ctree
+```
+
+```{r}
+g1 <- c("beautiful", "boring", "busy", "close", "difficult", "expensive", "funny", "happy", "high", "hot", "important", "long", "other", "small", "young")
+g2 <- c("bad", "big", "different", "good", "great", "hard", "interesting", "nice")
+
+hke <- hke %>%
+  dplyr::mutate(Adjective = dplyr::case_when(Adjective %in%  g1 ~ "g1",
+                                             Adjective %in%  g2 ~ "g2",
+                                             T ~ Adjective)) %>%
+    dplyr::mutate(Emotionality = dplyr::case_when(Emotionality ==  "neutral" ~ "non-neg.",
+                                                Emotionality ==  "negative" ~ "neg.",
+                                                Emotionality ==  "positive" ~ "non-neg.",
+                                                T ~ Emotionality)) %>%
+    dplyr::mutate(SemanticCategory = dplyr::case_when(SemanticCategory ==  "appearance" ~ "app.",
+                                             SemanticCategory ==  "evaluative" ~ "eval.",
+                                             SemanticCategory ==  "descriptive" ~ "sem1",
+                                             SemanticCategory ==  "membership" ~ "sem1",
+                                             SemanticCategory ==  "relational" ~ "sem1",
+                                             T ~ SemanticCategory)) %>%
+  dplyr::mutate_if(is.character, factor)
+```
+
+
+
+```{r}
+# set.seed (to store random numbers and thus make results reproducible)
+set.seed(2020083001) 
+# create initial conditional inference tree model
+hke.ctree <- ctree(Variant ~ Adjective + Age + Gender + Function + Date + Emotionality + SemanticCategory +  Gradability, data = hke, minbucket = 20)
+# plotting
+# extract p-values
+pvals <- unlist(nodeapply(hke.ctree, ids = nodeids(hke.ctree), function(n) info_node(n)$p.value))
+pvals <- pvals[pvals <.05]
+# plotting
+hket <- ggparty(hke.ctree) +
+  geom_edge() +
+  geom_edge_label(size = 3) +
+  geom_node_label(line_list = list(aes(label = splitvar),
+                                   aes(label = paste0("N=", nodesize, ", p", ifelse(pvals < .001, "<.001", paste0("=", round(pvals, 3)))), 
+                                       size = 10)),
+                  line_gpar = list(list(size = 10), list(size = 10)), 
+                  ids = "inner") +
+  geom_node_label(aes(label = paste0("N=", nodesize)),
+                  ids = "terminal", 
+                  nudge_y = 0.01, 
+                  nudge_x = 0.01, 
+                  size = 4) +
+  geom_node_plot(gglist = list(geom_bar(aes(x = "", fill = Variant),
+                                        position = position_fill()),
+      theme_minimal(base_size = 10),
+      theme(panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank()),
+      scale_fill_manual(values = c("gray20", "gray40", "gray60", "gray80")),
+      scale_y_continuous(breaks = seq(0, 1, .2)),
+      xlab(""), 
+      ylab("Probability")),
+    shared_axis_labels = TRUE)
+# save
+ggsave(hket, file = here("images", "Fig6.png"),
+         height = 6,  width = 10, dpi = 320)
+# inspect
+hket
+```
+
+
+Check accuracy of tree
+
+```{r}
+thke <- hke %>%
+  dplyr::mutate(prediction = predict(hke.ctree, newdata = hke))
+confusionMatrix(data=thke$prediction, reference = thke$Variant)
+```
+
+Check accuracy of tree
+
+```{r}
+# percentage points
+
+# improvement factor
+
+```
+
+# Outro
+
+Extract session information
+
+```{r amphkpie_02_93, echo=T, eval = T, message=FALSE, warning=FALSE}
+sessionInfo()
+``` 

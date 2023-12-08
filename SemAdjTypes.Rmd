@@ -1,0 +1,456 @@
+---
+title: "Semantic types of adjectives"
+output: html_notebook
+---
+
+install 
+
+```{r eval=F}
+install.packages("sentencepiece")
+install.packages("word2vec")
+install.packages("here")
+install.packages("uwot")
+install.packages("ggplot2")
+install.packages("ggrepel")
+install.packages("dplyr")
+install.packages("stringr")
+install.packages("factoextra")
+install.packages("cluster")
+install.packages("NbClust")
+```
+
+activate
+
+```{r}
+library(sentencepiece)
+library(word2vec)
+library(here)
+library(uwot)
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(stringr)
+library(factoextra)
+library(cluster)
+library(NbClust)
+```
+
+# extarct own embeddings
+
+Download w2v model based on BNC from http://vectors.nlpl.eu/repository/
+
+Load model
+
+```{r}
+w2vdf <- scan(file = here::here("models/0", "model.txt"), what = "char")
+str(w2vdf)
+```
+
+```{r}
+# remove first 2 entries (number of dimensions)
+w2vdf <- w2vdf[3:length(w2vdf)]
+# convert into matrix
+w2vdf <- matrix(w2vdf, nrow = 163473, ncol = 301, byrow = T)
+# add dim names
+dimnames(w2vdf) <- list(w2vdf[,1], c("word", paste0("dim", 1:300)))
+# convert to data frame
+w2vdf <- as.data.frame(w2vdf)
+# inspect
+head(w2vdf)
+```
+
+
+```{r}
+w2vdf2 <- w2vdf %>%
+  dplyr::filter(stringr::str_detect(word, "_ADJ")) %>%
+  dplyr::mutate(word = stringr::str_remove_all(word, "_.*")) %>%
+  dplyr::mutate(word = factor(word))
+#w2vdf <- w2vdf2 %>% dplyr::mutate_if(is.character, numeric)
+# inspect
+head(w2vdf2)
+```
+
+
+```{r}
+adj <- w2vdf2$word
+embedding <- w2vdf2 %>%
+  dplyr::select(-word) %>%
+  as.matrix()
+embedding <- matrix(as.numeric(embedding), ncol = 300)
+rownames(embedding) <- adj
+embedding <- embedding[complete.cases(embedding),]
+viz <- umap(embedding) %>%
+  as.data.frame()
+viz$word <- stringr::str_remove(rownames(viz), "_.*")
+colnames(viz)[1:2] <- c("x", "y")
+
+head(viz)
+```
+
+
+
+```{r}
+ggplot(viz, aes(x = x, y = y, label = word)) + 
+  #geom_text_repel(max.overlaps = 300, size = 1) + 
+  geom_text(size = 1) +
+  theme_bw() + 
+  coord_cartesian(xlim = c(-4.5, 3.5), ylim = c(-4, 5)) +
+  labs(title = "word2vec - adjectives in 2D using UMAP")
+ggsave(here::here("umap_bnc_adj.png"), width = 20, units = "cm")
+```
+
+## Determine optimal number of clusters
+
+We have shown that this dataset is clusterable. We are going to use k means algorithm to cluster the data and this requires us to specify how many clusters the dataset has so the next thing to do is to estimate this. (from https://rstudio-pubs-static.s3.amazonaws.com/375287_5021917f670c435bb0458af333716136.html)
+
+```{r}
+fviz_nbclust(viz[,1:2,], pam, method = "silhouette")+ theme_classic()
+```
+
+The gap statistic compares intra cluster variation for different values of k with expected intra cluster variation under null distribution. Ideally we should be choosing the value of k which maximizes the gap statistic however in real world datasets where clusters are not so well defined it may be more parsimonious to choose the k value to be the one where the rate of increase of the statistic begins to slow down (i.e. value lowest value of k that is greater than or equal to the value of k+1 minus the standard error). (from https://rstudio-pubs-static.s3.amazonaws.com/375287_5021917f670c435bb0458af333716136.html)
+
+
+```{r eval = F}
+fviz_nbclust(viz[,1:2], pam, method = "gap_stat")
+```
+
+
+Next we can run NbClust which computes up to 30 indices for determining the optimum number of clusters in a dataset and then takes a majority vote among them to see which is the optimum number of clusters.
+
+```{r eval = F}
+set.seed(123)
+clusternum <- NbClust((viz[,1:2]), distance="euclidean", method="kmeans")
+# inspect
+clusternum
+```
+
+
+```{r eval = F}
+set.seed(456)
+clusternum <- NbClust((embedding), distance="euclidean", method="kmeans")
+# inspect
+clusternum
+```
+
+
+```{r}
+set.seed(123)
+cl <- kmeans(viz[,1:2,], centers = 5)
+str(cl)
+```
+
+```{r}
+viz <- viz %>%
+  dplyr::mutate(cluster = cl$cluster,
+                cluster = factor(cluster))
+
+checkclust <- viz %>%
+  dplyr::group_by(cluster) %>%
+  dplyr::select(word)
+# inspect
+checkclust; table(checkclust$cluster)
+```
+
+```{r}
+clust1 <- checkclust %>% dplyr::filter(cluster == 1) %>% pull(word)
+clust2 <- checkclust %>% dplyr::filter(cluster == 2) %>% pull(word)
+clust3 <- checkclust %>% dplyr::filter(cluster == 3) %>% pull(word)
+clust4 <- checkclust %>% dplyr::filter(cluster == 4) %>% pull(word)
+clust5 <- checkclust %>% dplyr::filter(cluster == 5) %>% pull(word)
+# inspect
+head(clust1, 10) # evaluative
+head(clust2, 10) # descriptive
+head(clust3, 10) # relational
+head(clust4, 10) # membership
+head(clust5, 10) # appearance
+```
+
+save to disc
+
+```{r}
+saveRDS(clust1, here::here("tables", "clust1_evaluative.rda"))
+saveRDS(clust2, here::here("tables", "clust2_descriptive.rda"))
+saveRDS(clust3, here::here("tables", "clust3_relational.rda"))
+saveRDS(clust4, here::here("tables", "clust4_membership.rda"))
+saveRDS(clust5, here::here("tables", "clust5_appearance.rda"))
+```
+
+
+
+```{r}
+ggplot(viz, aes(x = x, y = y, label = word, color = cluster)) + 
+  #geom_text_repel(max.overlaps = 300, size = 1) + 
+  geom_text(size = 1) +
+  theme_bw() + 
+  theme(legend.position = "none") +
+  coord_cartesian(xlim = c(-4.5, 3.5), ylim = c(-4, 5)) +
+  labs(title = "word2vec - adjectives in 2D using UMAP") 
+ggsave(here::here("umap_bnc_adj.png"), width = 20, units = "cm")
+```
+
+
+
+## Extract similarities
+
+```{r}
+library(word2vec)
+model <- read.word2vec(file = here::here("models/0", "model.bin"), normalize = TRUE)
+```
+
+
+
+```{r}
+# load word vectors
+evaluative <- readRDS(here::here("tables", "clust1_evaluative.rda"))
+descriptive <- readRDS(here::here("tables", "clust2_descriptive.rda"))
+relational <- readRDS(here::here("tables", "clust3_relational.rda"))
+membership <- readRDS(here::here("tables", "clust4_membership.rda"))
+appearance <- readRDS(here::here("tables", "clust5_appearance.rda"))
+unclass <- readRDS(here::here("tables", "unclass.rda"))
+```
+
+
+
+```{r}
+# load unclassified items
+unclass <- readRDS(here::here("tables", "unclass.rda"))
+
+# correct errors
+unclass <- unclass %>%
+  stringr::str_replace_all("atheletic", "athletic") %>%
+  stringr::str_replace_all("brazalian", "brazilian") %>%
+  stringr::str_replace_all("colinary", "culinary") %>%
+  stringr::str_replace_all("coloquial", "colloquial") %>%
+  stringr::str_replace_all("colorful", "colourful") %>%
+  stringr::str_replace_all("comprahensive", "comprehensive") %>%
+  stringr::str_replace_all("continous", "continuous") %>%
+  stringr::str_replace_all("conveninent", "convenient") %>%
+  stringr::str_replace_all("convinient", "convenient") %>%
+  stringr::str_replace_all("dangereous", "dangerous") %>%
+  stringr::str_replace_all("diferent", "different") %>%
+  stringr::str_replace_all("dramatical", "dramatic") %>%
+  stringr::str_replace_all("ecnomic", "economic") %>%
+  stringr::str_replace_all("editoral", "editorial") %>%
+  stringr::str_replace_all("embarassed", "embarrassed") %>%
+  stringr::str_replace_all("embarassing", "embarrassing") %>%
+  stringr::str_replace_all("excellant", "excellent") %>%
+  stringr::str_replace_all("favoring", "favouring") %>%
+  stringr::str_replace_all("favorite", "favourite") %>%
+  stringr::str_replace_all("indutrial", "industrial") %>%
+  stringr::str_replace_all("instrumnetal", "instrumental") %>%
+  stringr::str_replace_all("mechanic", "mechanical") %>%
+  stringr::str_replace_all("numerial", "numerical") %>%
+  stringr::str_replace_all("presant", "present") %>%
+  stringr::str_replace_all("prevelent", "prevalent") %>%
+  stringr::str_replace_all("previleged", "privileged") %>%
+  stringr::str_replace_all("pshychological", "psychological") %>%
+  stringr::str_replace_all("sarcastical", "sarcastic") %>%
+  stringr::str_replace_all("strenous", "strenuous") %>%
+  stringr::str_replace_all("transferrable", "transferable")
+
+# not in dict
+notindict <- c("acquainted", "allured", "anasian", "anti-foundationalist", "anti-history", "anti-men", "anticeptic", "apart", "appeal", "architect", "archeological", "assert", "attract", "atypical", "bangalore", "battery", "bear", "better", "blush", "brazalian", "brindavan", "clearcut", "co-present", "coersive", "colinary", "complaint", "concerning", "contribute", "coral", "corollary", "courtesy", "cradle", "crash", "culture", "NA", "custom", "dalian", "dedicate", "deposited", "derogative", "determinant", "differental", "divert", "dowry", "e-acute", "earthern", "entertain", "exhibitive", "fashioned", "favouring", "few", "fortune", "forty", "frosh", "frustrate", "fugitive", "fujian", "funful", "garden", "giddish", "golly", "graduate", "hardsome", "hearsay", "hinglish", "hokkian", "hostel", "humongous", "humurous", "hybridized", "hydro-electrician", "hysanian", "imitating", "impressing", "impression", "incentive", "indemnity", "institute", "intendent", "justify", "lalagyan", "lasallian", "librarian", "lithuvanian", "lucarious", "maharashtrian", "malate", "mandarin", "many", "marriagable", "masteral", "medicine", "memorial", "migrated", "modelling", "monitory", "necesary", "nerdy", "newly", "non-chinese", "non-detailed", "non-maharashtrian", "non-poetic", "non-veg", "northwest", "nursery", "nutrious", "off", "overacting", "overeducated", "overeducated", "overflowed", "paddy", "parish", "particularly", "phonologian", "plastic", "pleasure", "politician", "polytechnic", "pomeranian", "popularized", "post-dated", "post-graduate", "postgraduate", "practic", "pre-academy", "pre-award", "pre-awards", "pre-historical", "pre-paninian", "pre-week", "predecessor", "pseudo-mystical", "quite", "reflexive", "relish", "retreat", "richable", "routinary", "same", "sauce", "scale", "seenable", "seldom", "semestral", "semi-departmental", "semilingual", "seminary", "several", "shandy", "shanghai", "shush", "skill", "slander", "socio-linguistic", "specialty", "spoil", "sprouted", "staple", "stimulus", "straightway", "strictly", "sturdious", "sucky", "swimming", "tamilian", "teary", "theoritical", "thistle", "skill", "treasurable", "trick", "typing", "undergraduate", "underwear", "unemployment", "upstairs", "urdu", "ushering", "utilatarian", "vithal", "worth", "yuck", "zero")
+
+# remove adjectives not in dictionary
+unclass <- unclass[!unclass %in% notindict]
+
+# function that checks most likely category based on 20 neighbors
+sims <- sapply(unclass, function(x){
+  result <- predict(model, newdata = c(paste0(x, "_ADJ")), type = "nearest", top_n = 20) %>%
+    as.data.frame() %>%
+    dplyr::rename(target = 1,
+                  lookalike = 2,
+                  similarity = 3,
+                  rank = 4) %>%
+    dplyr::filter(stringr::str_detect(lookalike, "ADJ")) %>%
+    dplyr::mutate(lookalike = stringr::str_remove_all(lookalike, "_ADJ"),
+                  target = stringr::str_remove_all(target, "_ADJ")) %>%
+    dplyr::mutate(class = dplyr::case_when(lookalike %in% evaluative ~ "evaluative",
+                                           lookalike %in% descriptive ~ "descriptive",
+                                           lookalike %in% relational ~ "relational",
+                                           lookalike %in% membership ~ "membership",
+                                           lookalike %in% appearance ~ "appearance",
+                                           T ~ NA)) %>%
+    dplyr::group_by(target) %>%
+    dplyr::summarise(class = names(table(class))[which.max(table(class))])
+  return(result)
+})
+
+# Custom function to filter tables with less than 2 columns
+filter_tables <- function(sims) {
+  filtered_list <- lapply(sims, function(table) {
+    if (ncol(table) >= 2) {
+      return(table)
+    }
+  })
+  # Remove NULL entries
+  return(filtered_list[!sapply(filtered_list, is.null)])
+}
+
+# filter out adjectives with no classification
+list_of_tables <- filter_tables(sims)
+
+# collapse tables
+collapsed_table <- do.call(rbind, list_of_tables)
+
+# adapt column names
+colnames(collapsed_table) <- c("Adjective", "SemanticCategory")
+# save table
+saveRDS(collapsed_table, here::here("tables", "adjclass.rda"))
+
+# inspect
+collapsed_table
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+vecsmx <- vecsmx[, 2:ncol(vecsmx)]
+# convert to numeric
+w2vmx <- matrix(as.numeric(vecsmx), ncol = 300, 
+                dimnames = dimnames(vecsmx))
+# inspect
+w2vmx[1:8, 1:8]
+str(w2vmx)
+```
+
+```{r}
+# extract adjectives
+words <- dimnames(w2vmx)[1] %>%
+  unlist()
+adj <- words %>%
+  stringr::str_detect("_ADJ")
+# inspect
+words[adj][1:10]
+```
+
+```{r}
+w2vadj <- w2vmx[dimnames(w2vmx) %in% adj,]
+# inspect
+w2vadj[1:8, 1:8]
+```
+
+
+# Pre-trained model
+
+```{r}
+dl    <- sentencepiece::sentencepiece_download_model("English", vocab_size = 200000)
+model <- sentencepiece::sentencepiece_load_model(dl$file_model)
+model
+```
+
+load pre-trained model to use with word2vec
+
+```{r}
+testmodel <- read.word2vec(file = "C:\\Users\\uqmschw5\\AppData\\Local\\renv\\cache\\v5\\R-4.2\\x86_64-w64-mingw32\\sentencepiece\\0.2.3\\7242e77e44f526d3fa7cbc0b8f1abc5b\\sentencepiece\\models/nl.wiki.bpe.vs1000.d25.w2v.txt", normalize = TRUE)
+```
+
+```{r}
+testmodel <- read.word2vec(file = here::here("models/0", "model.txt"), normalize = TRUE)
+str(testmodel)
+```
+
+```{r}
+predict(testmodel, newdata = c("british"), type = "nearest", top_n = 5)
+```
+
+
+load data
+
+```{r}
+adj_update <- base::readRDS(file = here::here("data/editdata", "adj_update.rda"))
+str(adj_update)
+```
+
+
+
+predict
+
+```{r}
+wv <- predict(model, newdata = adj_update, type = "embedding")
+```
+
+
+extract similarities
+
+```{r}
+predict(model, newdata = wv, type = "nearest", top_n = 3)
+```
+
+
+
+# Self-trained model
+
+load data
+
+```{r}
+adj <- base::readRDS(file = here::here("data/editdata", "adj_update.rda"))
+# read
+pos <- readRDS(here::here("data/editdata", "pos.rda")) %>%
+  dplyr::mutate(token = tolower(token),
+                lemma = tolower(lemma))
+# inspect
+head(pos)
+```
+
+```{r}
+x <- subset(pos, xpos %in% c("NN", "IN", "RB", "VB", "DT", "JJ", "PRP", "CC",
+                           "VBN", "NNP", "NNS", "PRP$", "CD", "WP", "VBG", "UH", "SYM"))
+x$text <- sprintf("%s_%s", x$lemma, x$xpos)
+x <- paste.data.frame(x, term = "text", group = "doc_id", collapse = " ")
+
+model     <- word2vec(x = x$text, dim = 15, iter = 20)
+embedding <- as.matrix(model)
+```
+
+
+```{r}
+df  <- data.frame(word = rownames(viz),  
+                  x = viz[, 1], y = viz[, 2], 
+                  stringsAsFactors = FALSE)
+df  <- subset(df, word %in% adj)
+
+```
+
+
+```{r}
+viz <- umap(embedding, n_neighbors = 15, n_threads = 2) %>%
+  as.data.frame()
+viz$word <- rownames(viz)
+colnames(viz)[1:2] <- c("x", "y")
+viz <- viz %>%
+  dplyr::filter(word %in% adj)
+head(viz)
+```
+
+
+```{r}
+ggplot(viz, aes(x = x, y = y, label = word)) + 
+  #geom_text_repel(max.overlaps = 300, size = 1) + 
+  geom_text(size = 1) +
+  theme_bw() + 
+  coord_cartesian(xlim = c(-5, 4), ylim = c(-3.5, 3.5)) +
+  labs(title = "word2vec - adjectives in 2D using UMAP")
+ggsave(here::here("adjmap.png"), width = 20, units = "cm")
+```
+
+
+
+
