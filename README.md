@@ -1,4 +1,4 @@
-# WE_AdjAmp_AsianEnglishes
+# Overview
 
 This is the repository for the article *A corpus-based analysis of adjective amplification in Hong Kong, Indian, and Philippine English* to be published in *World Englishes*.
 
